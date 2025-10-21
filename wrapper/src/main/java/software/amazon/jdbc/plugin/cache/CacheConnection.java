@@ -32,6 +32,7 @@ import software.amazon.awssdk.regions.Region;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
@@ -111,7 +112,13 @@ public class CacheConnection {
       new AwsWrapperProperty(
           "cacheName",
           null,
-          "Explicit cache name for ElastiCache IAM authentication. ");
+          "Explicit cache name for ElastiCache IAM authentication.");
+
+  protected static final AwsWrapperProperty CACHE_FAIL_ON_ERROR =
+      new AwsWrapperProperty(
+          "cacheFailOnError",
+          "false",
+          "Whether to throw SQLException on cache failures.");
 
   private final boolean useSSL;
   private final boolean iamAuthEnabled;
@@ -119,6 +126,7 @@ public class CacheConnection {
   private final String cacheUsername;
   private final String cacheName;
   private final String cachePassword;
+  private final Boolean cacheFailOnError;
   private final Properties awsProfileProperties;
   private final AwsCredentialsProvider credentialsProvider;
 
@@ -168,6 +176,7 @@ public class CacheConnection {
     } else {
       this.credentialsProvider = null;
     }
+    this.cacheFailOnError = Boolean.parseBoolean(CACHE_FAIL_ON_ERROR.getString(properties));
   }
 
   /* Here we check if we need to initialise connection pool for read or write to cache.
@@ -267,7 +276,7 @@ public class CacheConnection {
     return msgHashDigest.digest();
   }
 
-  public byte[] readFromCache(String key) {
+  public byte[] readFromCache(String key) throws SQLException {
     boolean isBroken = false;
     StatefulRedisConnection<byte[], byte[]> conn = null;
     // get a connection from the read connection pool
@@ -278,6 +287,9 @@ public class CacheConnection {
     } catch (Exception e) {
       if (conn != null) {
         isBroken = true;
+      }
+      if (cacheFailOnError) {
+        throw new SQLException("Cache read operation failed", e);
       }
       LOGGER.warning("Failed to read result from cache. Treating it as a cache miss: " + e.getMessage());
       return null;
@@ -314,26 +326,38 @@ public class CacheConnection {
     }
   }
 
-  public void writeToCache(String key, byte[] value, int expiry) {
+  public void writeToCache(String key, byte[] value, int expiry) throws SQLException {
     StatefulRedisConnection<byte[], byte[]> conn = null;
+    boolean asyncMode = false;
     try {
       initializeCacheConnectionIfNeeded(false);
       // get a connection from the write connection pool
       conn = writeConnectionPool.borrowObject();
-      // Write to the cache is async.
-      RedisAsyncCommands<byte[], byte[]> asyncCommands = conn.async();
       byte[] keyHash = computeHashDigest(key.getBytes(StandardCharsets.UTF_8));
-      StatefulRedisConnection<byte[], byte[]> finalConn = conn;
-      asyncCommands.set(keyHash, value, SetArgs.Builder.ex(expiry))
-          .whenComplete((result, exception) -> handleCompletedCacheWrite(finalConn, exception));
+
+      if (cacheFailOnError) {
+        conn.sync().set(keyHash, value, SetArgs.Builder.ex(expiry));
+      } else {
+        // Write to the cache is async.
+        asyncMode = true;
+        RedisAsyncCommands<byte[], byte[]> asyncCommands = conn.async();
+        StatefulRedisConnection<byte[], byte[]> finalConn = conn;
+        asyncCommands.set(keyHash, value, SetArgs.Builder.ex(expiry))
+            .whenComplete((result, exception) -> handleCompletedCacheWrite(finalConn, exception));
+      }
     } catch (Exception e) {
+      if (cacheFailOnError) {
+        throw new SQLException("Cache write operation failed", e);
+      }
       // Failed to trigger the async write to the cache, return the cache connection to the pool as broken
       LOGGER.warning("Unable to start writing to cache: " + e.getMessage());
-      if (conn != null && writeConnectionPool != null) {
+    } finally {
+      // Return connection for successful sync mode only
+      if (conn != null && !asyncMode && writeConnectionPool != null) {
         try {
-          returnConnectionBackToPool(conn, true, false);
+          returnConnectionBackToPool(conn, false, false);
         } catch (Exception ex) {
-          LOGGER.warning("Error closing write connection: " + ex.getMessage());
+          LOGGER.warning("Error returning write connection: " + ex.getMessage());
         }
       }
     }
@@ -396,5 +420,9 @@ public class CacheConnection {
 
   private String[] getHostnameAndPort(String serverAddr) {
     return serverAddr.split(":");
+  }
+
+  public boolean shouldFailOnError() {
+    return cacheFailOnError;
   }
 }
