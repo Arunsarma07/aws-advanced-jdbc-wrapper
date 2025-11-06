@@ -16,7 +16,9 @@
 
 plugins {
     id("me.champeau.jmh")
+    id("com.google.osdetector") version "1.7.3"
 }
+val nativeClassifier: String = osdetector.classifier
 
 dependencies {
     jmhImplementation(project(":aws-advanced-jdbc-wrapper"))
@@ -27,6 +29,10 @@ dependencies {
     implementation("org.checkerframework:checker-qual:3.49.5")
     implementation("io.lettuce:lettuce-core:6.6.0.RELEASE")
     implementation("org.apache.commons:commons-pool2:2.11.1")
+    implementation("io.valkey:valkey-glide:2.2.0-rc3:$nativeClassifier")
+    implementation("software.amazon.awssdk:rds:2.33.5")
+    implementation("software.amazon.awssdk:secretsmanager:2.33.5")
+    implementation("software.amazon.awssdk:sts:2.33.5")
     annotationProcessor("org.openjdk.jmh:jmh-core:1.36")
     jmhAnnotationProcessor ("org.openjdk.jmh:jmh-generator-annprocess:1.36")
 
@@ -37,4 +43,5 @@ dependencies {
 
 tasks.named<Test>("test") {
     useJUnitPlatform()
+    systemProperty("java.util.logging.config.file", "${project.layout.buildDirectory.get()}/resources/test/logging-test.properties")
 }

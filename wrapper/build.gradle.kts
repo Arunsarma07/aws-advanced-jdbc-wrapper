@@ -24,9 +24,12 @@ plugins {
     id("com.github.vlsi.ide")
     id("com.kncept.junit.reporter")
     id("com.gradleup.shadow") version "8.3.5" // 8.3.5 is the last version that is compatible with Java 8
+    id("com.google.osdetector") version "1.7.3" // Plugin used to detect OS and use for GLIDE
 }
 
 var useJacoco = (!project.hasProperty("jacocoEnabled") || project.property("jacocoEnabled").toString().toBoolean())
+
+val nativeClassifier: String = osdetector.classifier
 
 if (useJacoco) {
     apply(plugin = "org.gradle.jacoco")
@@ -58,6 +61,7 @@ dependencies {
     compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.6")
     compileOnly("org.osgi:org.osgi.core:6.0.0")
     compileOnly("org.jetbrains.kotlin:kotlin-stdlib:2.2.20")
+    compileOnly("io.valkey:valkey-glide:2.2.0-rc3:$nativeClassifier")
 
     // The following dependency will be included in federated-auth bundle jar.
     federatedAuthBundleImplementation("org.apache.httpcomponents:httpclient:4.5.14")
@@ -111,6 +115,7 @@ dependencies {
     testImplementation("org.hibernate:hibernate-core:5.6.15.Final") // the latest version compatible with Java 8
     testImplementation("jakarta.persistence:jakarta.persistence-api:2.2.3")
     testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.19.2")
+    testImplementation("io.valkey:valkey-glide:2.2.0-rc3:$nativeClassifier")
 }
 
 repositories {
@@ -131,7 +136,7 @@ java {
     withJavadocJar()
     withSourcesJar()
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(8))
+        languageVersion.set(JavaLanguageVersion.of(11))
     }
 }
 

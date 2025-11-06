@@ -32,20 +32,21 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
  */
 @State(Scope.Thread)
 @Fork(1)
+@Threads(8)
 @Warmup(iterations = 1)
-@Measurement(iterations = 60, time = 1)
+@Measurement(iterations = 10, time = 1)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class PgCacheBenchmarks {
-  private static final String DB_CONNECTION_STRING = "jdbc:aws-wrapper:postgresql://db-0.XYZ.us-east-2.rds.amazonaws.com:5432/postgres";
-  private static final String CACHE_RW_SERVER_ADDR = "cache-0.XYZ.us-east-2.rds.amazonaws.com:6379";
-  private static final String CACHE_RO_SERVER_ADDR = "cache-0.XYZ.us-east-2.rds.amazonaws.com:6380";
+  private static final String DB_CONNECTION_STRING = "jdbc:aws-wrapper:mysql://dev-dsk-arunorgn-1a-a5eb404d.us-east-1.amazon.com:3306/mysql";
+  private static final String CACHE_RW_SERVER_ADDR = "dev-dsk-arunorgn-1a-a5eb404d.us-east-1.amazon.com:6379";
+  private static final String CACHE_RO_SERVER_ADDR = "dev-dsk-arunorgn-1a-a5eb404d.us-east-1.amazon.com:6380";
 
   private Connection connection;
   private int counter;
   long startTime;
 
-  public static void main(String[] args) throws RunnerException {
+  public static void main(String[] args) throws RunnerException, SQLException {
     Options opt = new OptionsBuilder()
         .include(PgCacheBenchmarks.class.getSimpleName())
         .addProfiler(GCProfiler.class)
@@ -58,16 +59,23 @@ public class PgCacheBenchmarks {
   @Setup(Level.Trial)
   public void setup() throws SQLException {
     try {
-      software.amazon.jdbc.Driver.register();
+      //software.amazon.jdbc.Driver.register();
     } catch (IllegalStateException e) {
       System.out.println("exception during register() is " + e.getMessage());
     }
+    System.out.println("Setup called by thread: " + Thread.currentThread().getName());
     Properties properties = new Properties();
     properties.setProperty("wrapperPlugins", "dataRemoteCache");
     properties.setProperty("cacheEndpointAddrRw", CACHE_RW_SERVER_ADDR);
     properties.setProperty("cacheEndpointAddrRo", CACHE_RO_SERVER_ADDR);
     properties.setProperty("wrapperLogUnclosedConnections", "true");
-    counter = 0;
+    properties.setProperty("user", "db_user");
+    properties.setProperty("password", "Temp@123");
+    properties.setProperty("cacheUseSSL","false");
+    properties.setProperty("cacheClientType", "glide");
+    properties.setProperty("cacheConnectionPoolSize", "1");
+    properties.setProperty("cacheConnectionTimeout", "60000");
+        counter = 0;
     connection = DriverManager.getConnection(DB_CONNECTION_STRING, properties);
     startTime = System.currentTimeMillis();
   }
@@ -84,7 +92,8 @@ public class PgCacheBenchmarks {
       Statement stmt = connection.createStatement();
       String description = "description " + i;
       String text = "here is my text data " + i;
-      String query = "insert into test values (" + i + ", " + i * 10 + ", '" + description + "', '" + text + "', " + i * 100 + 0.1234 + ", '2024-01-10', '10:00:00', '10:00:00-07', '2025-07-15 10:00:00', '2025-07-15 10:00:00-07'" + ", '" + desc_1KB + "');";
+      //String query = "insert into test values (" + i + ", " + i * 10 + ", '" + description + "', '" + text + "', " + i * 100 + 0.1234 + ", '2024-01-10', '10:00:00', '10:00:00-07', '2025-07-15 10:00:00', '2025-07-15 10:00:00-07'" + ", '" + desc_1KB + "');";
+      String query = "insert into test values (" + i + ", " + i * 10 + ", '" + description + "', '" + text + "', " + i * 100 + 0.1234 + ", '2024-01-10', '10:00:00', '10:00:00', '2025-07-15 10:00:00', '2025-07-15 10:00:00'" + ", '" + desc_1KB + "');";
       int rs = stmt.executeUpdate(query);
       assert rs == 1;
     }
@@ -106,7 +115,7 @@ public class PgCacheBenchmarks {
     }
   }
 
-  @Benchmark
+  //@Benchmark
   public void runBenchmarkPrimaryKeyLookupNoCaching(Blackhole b) throws SQLException {
     try (Statement stmt = connection.createStatement();
          ResultSet rs = stmt.executeQuery("SELECT * FROM test where id = " + counter)) {
@@ -115,7 +124,7 @@ public class PgCacheBenchmarks {
     counter++;
   }
 
-  @Benchmark
+  //@Benchmark
   public void runBenchmarkNonIndexedLookupNoCaching(Blackhole b) throws SQLException {
     try (Statement stmt = connection.createStatement();
          ResultSet rs = stmt.executeQuery("SELECT * FROM test where int_col = " + counter*10)) {
@@ -133,7 +142,7 @@ public class PgCacheBenchmarks {
     counter++;
   }
 
-  @Benchmark
+  //@Benchmark
   public void runBenchmarkNonIndexedLookupWithCaching(Blackhole b) throws SQLException {
     try (Statement stmt = connection.createStatement();
          ResultSet rs = stmt.executeQuery("/*+ CACHE_PARAM(ttl=172800s) */ SELECT * FROM test where int_col = " + counter*10)) {

@@ -13,6 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+plugins{
+    checkstyle
+    java
+    id("com.google.osdetector") version "1.7.3" // Plugin used to detect OS and use for GLIDE
+}
+
+val nativeClassifier: String = osdetector.classifier
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc:2.7.13") // 2.7.13 is the last version compatible with Java 8
@@ -31,6 +38,7 @@ dependencies {
     implementation("com.mchange:c3p0:0.11.0")
     implementation("io.lettuce:lettuce-core:6.6.0.RELEASE")
     implementation("org.apache.commons:commons-pool2:2.11.1")
+    implementation("io.valkey:valkey-glide:2.2.0-rc3:$nativeClassifier")
 }
 
 tasks.withType<JavaExec> {

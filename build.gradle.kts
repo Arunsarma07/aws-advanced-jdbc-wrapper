@@ -25,6 +25,7 @@ plugins {
     id("com.github.vlsi.gradle-extensions")
     id("com.github.vlsi.stage-vote-release")
     id("com.github.vlsi.ide")
+    id("com.google.osdetector") version "1.7.3"
 }
 
 releaseParams {
@@ -51,6 +52,12 @@ allprojects {
     apply(plugin = "signing")
     apply(plugin = "maven-publish")
     apply(plugin = "com.github.vlsi.ide")
+
+    java {
+        toolchain {
+            languageVersion.set(JavaLanguageVersion.of(11))
+        }
+    }
 
     tasks {
         configureEach<JavaCommentPreprocessorTask> {

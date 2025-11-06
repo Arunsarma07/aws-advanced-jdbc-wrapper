@@ -26,6 +26,7 @@ public class DatabaseConnectionWithCacheExample {
   private static final long TEST_DURATION_MS = 16000; //Test duration for 16 seconds
   private static final String CACHE_CONNECTION_TIMEOUT = env.get("CACHE_CONNECTION_TIMEOUT"); //Set connection timeout in milliseconds
   private static final String CACHE_CONNECTION_POOL_SIZE = env.get("CACHE_CONNECTION_POOL_SIZE"); //Set connection pool size
+  private static final String CACHE_CLIENT_TYPE = env.get("CACHE_CLIENT_TYPE");
 
   public static void main(String[] args) throws SQLException {
     final Properties properties = new Properties();
@@ -44,11 +45,12 @@ public class DatabaseConnectionWithCacheExample {
     properties.setProperty("cacheUsername", CACHE_USERNAME);
     properties.setProperty("cacheIamRegion", CACHE_IAM_REGION);
     // If the cache server is authenticated with traditional username password
-    // properties.setProperty("cachePassword", PASSWORD);
+    // properties.setProperty("cachePassword", CACHE_PASSWORD);
     properties.setProperty("cacheUseSSL", CACHE_USE_SSL); // "true" or "false"
     properties.setProperty("wrapperLogUnclosedConnections", "true");
     properties.setProperty("cacheConnectionTimeout", CACHE_CONNECTION_TIMEOUT);
     properties.setProperty("cacheConnectionPoolSize", CACHE_CONNECTION_POOL_SIZE);
+    properties.setProperty("cacheClientType", CACHE_CLIENT_TYPE);
     String queryStr = "/*+ CACHE_PARAM(ttl=300s) */ select * from cinemas";
 
     // Create threads for concurrent connection testing
