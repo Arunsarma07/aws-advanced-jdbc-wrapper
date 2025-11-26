@@ -59,7 +59,7 @@ public class CacheConnection {
 
   private static final int DEFAULT_POOL_MIN_IDLE = 0;
   private static final int DEFAULT_MAX_POOL_SIZE = 200;
-  private static final long DEFAULT_MAX_BORROW_WAIT_MS = 100;
+  private static final long DEFAULT_MAX_BORROW_WAIT_MS = 10000;
   private static final long TOKEN_CACHE_DURATION = 15 * 60 - 30;
 
   private static final ReentrantLock READ_LOCK = new ReentrantLock();
@@ -68,7 +68,7 @@ public class CacheConnection {
   private final String cacheRwServerAddr; // read-write cache server
   private final String cacheRoServerAddr; // read-only cache server
   private final String[] defaultCacheServerHostAndPort;
-  private MessageDigest msgHashDigest = null;
+  //private MessageDigest msgHashDigest = null;
 
   protected static final AwsWrapperProperty CACHE_RW_ENDPOINT_ADDR =
       new AwsWrapperProperty(
@@ -136,9 +136,8 @@ public class CacheConnection {
   private static final GenericObjectPoolConfig<StatefulRedisConnection<byte[], byte[]>> poolConfig = createPoolConfig();
 
   //Adding support for read and write connection pools using Glide
-  private static volatile GenericObjectPool<GlideClusterClient> readGlideClientPool;
-  private static volatile GenericObjectPool<GlideClusterClient> writeGlideClientPool;
-  private static final GenericObjectPoolConfig<GlideClusterClient> glidePoolConfig = createGlidePoolConfig();
+  private static volatile GlideClusterClient readGlideClient;
+  private static volatile GlideClusterClient writeGlideClient;
 
   private final boolean useSSL;
   private final boolean iamAuthEnabled;
@@ -174,9 +173,6 @@ public class CacheConnection {
     // Update the static poolConfig with user values
     poolConfig.setMaxTotal(this.cacheConnectionPoolSize);
     poolConfig.setMaxIdle(this.cacheConnectionPoolSize);
-    // Updating the static glidePoolConfig with user values
-    glidePoolConfig.setMaxTotal(this.cacheConnectionPoolSize);
-    glidePoolConfig.setMaxIdle(this.cacheConnectionPoolSize);
 
     this.iamAuthEnabled = !StringUtils.isNullOrEmpty(this.cacheIamRegion);
     boolean hasTraditionalAuth = !StringUtils.isNullOrEmpty(this.cachePassword);
@@ -215,7 +211,6 @@ public class CacheConnection {
   }
 
 
-
   /* Here we check if we need to initialise connection pool for read or write to cache.
   With isRead we check if we need to initialise connection pool for read or write to cache.
   If isRead is true, we initialise connection pool for read.
@@ -224,13 +219,13 @@ public class CacheConnection {
   private void initializeCacheConnectionIfNeeded(boolean isRead) {
     if (StringUtils.isNullOrEmpty(cacheRwServerAddr)) return;
     // Initialize the message digest
-    if (msgHashDigest == null) {
-      try {
-        msgHashDigest = MessageDigest.getInstance("SHA-384");
-      } catch (NoSuchAlgorithmException e) {
-        throw new RuntimeException("SHA-384 not supported", e);
-      }
-    }
+//     if (msgHashDigest == null) {
+//       try {
+//         msgHashDigest = MessageDigest.getInstance("SHA-384");
+//       } catch (NoSuchAlgorithmException e) {
+//         throw new RuntimeException("SHA-384 not supported", e);
+//       }
+//     }
 
     GenericObjectPool<StatefulRedisConnection<byte[], byte[]>> cacheConnectionPool =
         isRead ? readConnectionPool : writeConnectionPool;
@@ -281,6 +276,7 @@ public class CacheConnection {
               }
               return connection;
             }
+
             public PooledObject<StatefulRedisConnection<byte[], byte[]>> wrap(StatefulRedisConnection<byte[], byte[]> connection) {
               return new DefaultPooledObject<>(connection);
             }
@@ -310,20 +306,27 @@ public class CacheConnection {
 
   // Get the hash digest of the given key.
   private byte[] computeHashDigest(byte[] key) {
-    msgHashDigest.update(key);
-    return msgHashDigest.digest();
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-384");
+      digest.update(key);
+      return digest.digest();
+    } catch (NoSuchAlgorithmException e) {
+      throw new RuntimeException("SHA-384 not supported", e);
+    }
   }
 
   public byte[] readFromCache(String key) {
-    if (useGlide){
+    if (useGlide) {
+//       System.out.println("Thread: " + Thread.currentThread().getName() +
+//           " - ReadPool: " + System.identityHashCode(readGlideClient) +
+//           " - WritePool: " + System.identityHashCode(writeGlideClient));
       return readFromCacheUsingGlide(key);
-    }
-    else{
+    } else {
       return readFromCacheUsingLettuce(key);
     }
   }
 
-  private byte[] readFromCacheUsingLettuce(String key){
+  private byte[] readFromCacheUsingLettuce(String key) {
     boolean isBroken = false;
     StatefulRedisConnection<byte[], byte[]> conn = null;
     // get a connection from the read connection pool
@@ -375,15 +378,17 @@ public class CacheConnection {
   }
 
   public void writeToCache(String key, byte[] value, int expiry) {
-    if(useGlide){
+    if (useGlide) {
+//       System.out.println("Thread: " + Thread.currentThread().getName() +
+//           " - ReadPool: " + System.identityHashCode(readGlideClient) +
+//           " - WritePool: " + System.identityHashCode(writeGlideClient));
       writeToCacheUsingGlide(key, value, expiry);
-    }
-    else{
+    } else {
       writeToCacheUsingLettuce(key, value, expiry);
     }
   }
 
-  private void writeToCacheUsingLettuce(String key, byte[] value, int expiry){
+  private void writeToCacheUsingLettuce(String key, byte[] value, int expiry) {
     StatefulRedisConnection<byte[], byte[]> conn = null;
     try {
       initializeCacheConnectionIfNeeded(false);
@@ -411,7 +416,7 @@ public class CacheConnection {
     }
   }
 
-  private void returnConnectionBackToPool(StatefulRedisConnection <byte[], byte[]> connection, boolean isConnectionBroken, boolean isRead) {
+  private void returnConnectionBackToPool(StatefulRedisConnection<byte[], byte[]> connection, boolean isConnectionBroken, boolean isRead) {
     GenericObjectPool<StatefulRedisConnection<byte[], byte[]>> pool = isRead ? readConnectionPool : writeConnectionPool;
     if (isConnectionBroken) {
       try {
@@ -482,63 +487,41 @@ public class CacheConnection {
   // Glide Initialization
   private void initializeGlideCacheConnectionIfNeeded(boolean isRead) {
     if (StringUtils.isNullOrEmpty(cacheRwServerAddr)) return;
+
+    if ((isRead && readGlideClient != null) || (!isRead && writeGlideClient != null)) {
+      return;
+    }
     // Initialize the message digest
-    if (msgHashDigest == null) {
-      try {
-        msgHashDigest = MessageDigest.getInstance("SHA-384");
-      } catch (NoSuchAlgorithmException e) {
-        throw new RuntimeException("SHA-384 not supported", e);
-      }
-    }
+//     if (msgHashDigest == null) {
+//       try {
+//         msgHashDigest = MessageDigest.getInstance("SHA-384");
+//       } catch (NoSuchAlgorithmException e) {
+//         throw new RuntimeException("SHA-384 not supported", e);
+//       }
+//     }
 
-    GenericObjectPool<GlideClusterClient> cacheClientPool =
-        isRead ? readGlideClientPool : writeGlideClientPool;
-    if (cacheClientPool == null) {
-      ReentrantLock connectionPoolLock = isRead ? READ_LOCK : WRITE_LOCK;
-      connectionPoolLock.lock();
-      try {
-        if ((isRead && readGlideClientPool == null) || (!isRead && writeGlideClientPool == null)) {
-          createGlideClientPool(isRead);
-        }
-      } finally {
-        connectionPoolLock.unlock();
-      }
-    }
-
-  }
-
-  // creating Glide pool client
-  private void createGlideClientPool(boolean isRead) {
+    ReentrantLock connectionPoolLock = isRead ? READ_LOCK : WRITE_LOCK;
+    connectionPoolLock.lock();
     try {
+      // Double-check locking inside synchronized block
       GlideClusterClientConfiguration config = buildGlideClusterClientConfiguration(isRead);
+      if (isRead && readGlideClient == null) {
+        LOGGER.info("Initializing Glide Read Client...");
 
-      //long startTime = System.currentTimeMillis();
-      GenericObjectPool<GlideClusterClient> pool = new GenericObjectPool<>(
-          new BasePooledObjectFactory<GlideClusterClient>() {
-            //creates glide client object
-            public GlideClusterClient create() throws Exception {
-              return GlideClusterClient.createClient(config).get();
-            }
-
-            public PooledObject<GlideClusterClient> wrap(GlideClusterClient client) {
-              return new DefaultPooledObject<>(client);
-            }
-          }, glidePoolConfig);
-
-      //long duration = System.currentTimeMillis() - startTime;
-      //LOGGER.info("Glide connection pool created in " + duration + "ms");
-
-      if (isRead) {
-        readGlideClientPool = pool;
-      } else {
-        writeGlideClientPool = pool;
+        readGlideClient = GlideClusterClient.createClient(config).get();
+      } else if (!isRead && writeGlideClient == null) {
+        LOGGER.info("Initializing Glide Write Client...");
+        writeGlideClient = GlideClusterClient.createClient(config).get();
       }
     } catch (Exception e) {
       String poolType = isRead ? "read" : "write";
-      String errorMsg = String.format("Failed to create Cache %s Glide client pool", poolType);
+      String errorMsg = String.format("Failed to create Glide %s client", poolType);
       LOGGER.warning(errorMsg + ": " + e.getMessage());
       throw new RuntimeException(errorMsg, e);
+    } finally {
+      connectionPoolLock.unlock();
     }
+
   }
 
   // build glide cluster client configuration
@@ -563,7 +546,7 @@ public class CacheConnection {
         .readFrom(!StringUtils.isNullOrEmpty(cacheRoServerAddr) ? ReadFrom.PREFER_REPLICA : ReadFrom.PRIMARY);
 
     //If TLS enabled
-    if(useSSL){
+    if (useSSL) {
       TlsAdvancedConfiguration tlsConfig = TlsAdvancedConfiguration.builder()
           .useInsecureTLS(true)
           .build();
@@ -577,7 +560,7 @@ public class CacheConnection {
     }
 
     //If IAM authentication or ACL authentication enabled
-    if(this.iamAuthEnabled){
+    if (this.iamAuthEnabled) {
       //To do: - Configure IAM Authentication
       boolean isServerless = hostnameAndPort[0].contains(ElastiCacheIamTokenUtility.SERVERLESS_CACHE_IDENTIFIER);
       Supplier<String> tokenSupplier = CachedSupplier.memoizeWithExpiration(
@@ -602,7 +585,7 @@ public class CacheConnection {
 
       config.credentials(credentials);
 
-    } else if(!StringUtils.isNullOrEmpty(this.cachePassword)){
+    } else if (!StringUtils.isNullOrEmpty(this.cachePassword)) {
       config.credentials(ServerCredentials.builder()
           .username(this.cacheUsername)
           .password(this.cachePassword)
@@ -612,113 +595,48 @@ public class CacheConnection {
     return config.build();
   }
 
-  //Glide pool config
-  private static GenericObjectPoolConfig<GlideClusterClient> createGlidePoolConfig(){
-    GenericObjectPoolConfig<GlideClusterClient> poolConfig = new GenericObjectPoolConfig<>();
-    poolConfig.setMinIdle(DEFAULT_POOL_MIN_IDLE);
-    poolConfig.setMaxWait(Duration.ofMillis(DEFAULT_MAX_BORROW_WAIT_MS));
-    return poolConfig;
-  }
-
   //read using glide client
   private byte[] readFromCacheUsingGlide(String key) {
-    boolean isBroken = false;
-    GlideClusterClient client = null;
     try {
       initializeGlideCacheConnectionIfNeeded(true);
       //long startTime = System.currentTimeMillis();
-
-      client = readGlideClientPool.borrowObject();
       byte[] keyHash = computeHashDigest(key.getBytes(StandardCharsets.UTF_8));
       GlideString keyGs = GlideString.of(keyHash);
-      GlideString gs = client.get(keyGs).get();
+      GlideString gs = readGlideClient.get(keyGs).get();
 
       //long duration = System.currentTimeMillis() - startTime;
       //LOGGER.info("Glide read time: " + duration + "ms");
 
+
       return (gs != null) ? gs.getBytes() : null;
     } catch (Exception e) {
-      if (client != null) {
-        isBroken = true;
-      }
       LOGGER.warning("Failed to read result from cache. Treating it as a cache miss: " + e.getMessage());
       return null;
-    } finally {
-      if (client != null && readGlideClientPool != null) {
-        try {  // ADD: Wrap in try-catch
-          this.returnGlideClientBackToPool(client, isBroken, true);
-        } catch (Exception ex) {
-          LOGGER.warning("Error returning Glide read client: " + ex.getMessage());
-        }
-      }
     }
   }
 
   // write using glide client
   private void writeToCacheUsingGlide(String key, byte[] value, int expiry) {
-    GlideClusterClient client = null;
     try {
       initializeGlideCacheConnectionIfNeeded(false);
       //long startTime = System.currentTimeMillis();
       // get a client from client pool
-      client = writeGlideClientPool.borrowObject();
 
       byte[] keyHash = computeHashDigest(key.getBytes(StandardCharsets.UTF_8));
       GlideString keyGs = GlideString.of(keyHash);
       GlideString valueGs = GlideString.of(value);
       SetOptions options = SetOptions.builder().expiry(SetOptions.Expiry.Seconds((long) expiry)).build();
 
-      GlideClusterClient finalClient = client;
-      client.set(keyGs, valueGs, options).whenComplete((result, throwable) -> {
-        handleCompletedGlideCacheWrite(finalClient, throwable);  // FIX: Remove finally block here
+      writeGlideClient.set(keyGs, valueGs, options).whenComplete((result, throwable) -> {
+        if (throwable != null) {
+          LOGGER.warning("Async write to Glide cache failed: " + throwable.getMessage());
+        }
       });
       //long duration = System.currentTimeMillis() - startTime;
       //LOGGER.info("Glide write time: " + duration + "ms");
       // LOGGER.finest("Successfully wrote to cache using Glide");
     } catch (Exception e) {
       LOGGER.warning("Unable to start writing to cache using Glide: " + e.getMessage());
-      if (client != null && writeGlideClientPool != null) {
-        try {
-          returnGlideClientBackToPool(client, true, false);
-        } catch (Exception ex) {
-          LOGGER.warning("Error closing write connection: " + ex.getMessage());
-        }
-      }
-    }
-  }
-
-
-  private void returnGlideClientBackToPool(GlideClusterClient client, boolean isBroken, boolean isRead) {
-    GenericObjectPool<GlideClusterClient> pool = isRead ? readGlideClientPool : writeGlideClientPool;
-    if (isBroken) {
-      try {
-        pool.invalidateObject(client);
-      } catch (Exception e) {
-        throw new RuntimeException("Could not invalidate Glide client for the pool", e);  // FIX: Throw exception
-      }
-    } else {
-      pool.returnObject(client);
-    }
-  }
-
-  private void handleCompletedGlideCacheWrite(GlideClusterClient client, Throwable ex) {
-    if (ex != null) {
-      LOGGER.warning("Failed to write to cache using Glide: " + ex.getMessage());
-      if (writeGlideClientPool != null) {
-        try {
-          returnGlideClientBackToPool(client, true, false);
-        } catch (Exception e) {
-          LOGGER.warning("Error returning broken Glide write client back to pool: " + e.getMessage());
-        }
-      }
-    } else {
-      if (writeGlideClientPool != null) {
-        try {
-          returnGlideClientBackToPool(client, false, false);
-        } catch (Exception e) {
-          LOGGER.warning("Error returning Glide write client back to pool: " + e.getMessage());
-        }
-      }
     }
   }
 }

@@ -34,8 +34,8 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 @Fork(1)
 @Threads(8)
 @Warmup(iterations = 1)
-@Measurement(iterations = 10, time = 1)
-@BenchmarkMode(Mode.AverageTime)
+@Measurement(iterations = 60, time = 1)
+@BenchmarkMode({Mode.AverageTime, Mode.Throughput})
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class PgCacheBenchmarks {
   private static final String DB_CONNECTION_STRING = "jdbc:aws-wrapper:mysql://dev-dsk-arunorgn-1a-a5eb404d.us-east-1.amazon.com:3306/mysql";
@@ -72,8 +72,8 @@ public class PgCacheBenchmarks {
     properties.setProperty("user", "db_user");
     properties.setProperty("password", "Temp@123");
     properties.setProperty("cacheUseSSL","false");
-    properties.setProperty("cacheClientType", "glide");
-    properties.setProperty("cacheConnectionPoolSize", "1");
+    properties.setProperty("cacheClientType", "lettuce");
+    properties.setProperty("cacheConnectionPoolSize", "8");
     properties.setProperty("cacheConnectionTimeout", "60000");
         counter = 0;
     connection = DriverManager.getConnection(DB_CONNECTION_STRING, properties);
